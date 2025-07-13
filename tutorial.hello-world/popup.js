@@ -3,6 +3,7 @@ const MAX_SCREENSHOTS = 10; // Reduced limit to be more conservative
 const SCROLL_DELAY = 200; // Delay after scrolling before capture
 const CAPTURE_DELAY = 500; // Delay between screenshot captures
 const SCREENSHOT_QUALITY = 90; // PNG quality for screenshots
+const NEXT_BUTTON_DELAY = 1000; // Delay before clicking next button
 
 // Show loading message immediately
 const resultElement = document.getElementById("result");
@@ -12,11 +13,45 @@ resultElement.className = "loading";
 // Function to detect if URL is likely a PDF
 function isPdfUrl(url) {
   return url.includes('/pdf/') ||           // arXiv, many academic sites
-         url.endsWith('.pdf') ||            // Direct PDF files
-         url.includes('pdf?') ||            // PDF with query params
-         url.includes('filetype=pdf') ||    // Some document viewers
-         url.match(/\/pdf\/\d+/) ||         // arXiv-specific pattern
-         url.includes('arxiv.org/pdf/');    // Explicit arXiv PDF check
+    url.endsWith('.pdf') ||            // Direct PDF files
+    url.includes('pdf?') ||            // PDF with query params
+    url.includes('filetype=pdf') ||    // Some document viewers
+    url.match(/\/pdf\/\d+/) ||         // arXiv-specific pattern
+    url.includes('arxiv.org/pdf/');    // Explicit arXiv PDF check
+}
+
+// Function to check if this is an Amazon order history page
+function isAmazonOrderHistoryPage(url) {
+  return url.includes('amazon.com') && url.includes('/your-orders/orders');
+}
+
+// Function to click the Next button on Amazon order history page
+async function clickNextButton(tabId) {
+  try {
+    const [{ result: nextButtonExists }] = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        // Look for the Next button in pagination
+        const nextButton = document.querySelector('ul.a-pagination li.a-last a');
+        if (nextButton && nextButton.textContent.includes('Next')) {
+          nextButton.click();
+          return true;
+        }
+        return false;
+      }
+    });
+
+    if (nextButtonExists) {
+      console.log("Successfully clicked Next button");
+      return true;
+    } else {
+      console.log("Next button not found or already on last page");
+      return false;
+    }
+  } catch (error) {
+    console.error("Error clicking Next button:", error);
+    return false;
+  }
 }
 
 // Function to show error message
@@ -56,10 +91,10 @@ async function captureFullPageScreenshot(tabId, windowId) {
 
     // Calculate number of screenshots needed
     const numScreenshots = Math.ceil(pageHeight / viewportHeight);
-    
+
     // Limit the number of screenshots to avoid quota issues
     const actualScreenshots = Math.min(numScreenshots, MAX_SCREENSHOTS);
-    
+
     let screenshots = [];
 
     for (let i = 0; i < actualScreenshots; i++) {
@@ -79,7 +114,7 @@ async function captureFullPageScreenshot(tabId, windowId) {
         quality: SCREENSHOT_QUALITY
       });
       screenshots.push(screenshot);
-      
+
       // Add delay between captures to respect rate limits
       if (i < actualScreenshots - 1) { // Don't delay after the last screenshot
         await new Promise(resolve => setTimeout(resolve, CAPTURE_DELAY));
@@ -113,13 +148,13 @@ async function captureSingleScreenshot(windowId) {
 // Auto-run summarization when popup opens
 chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
   const pageUrl = tab.url; // Get the URL of the active tab
-  
+
   // Check if this is a PDF URL
   if (isPdfUrl(pageUrl)) {
     showError("PDF summarization is not currently supported. This appears to be a PDF document.");
     return;
   }
-  
+
   chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: function () {
@@ -131,17 +166,17 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       showError("Cannot summarize this page. Unable to access page content.");
       return;
     }
-    
+
     // Capture screenshot of the visible tab
     try {
       const screenshots = await captureFullPageScreenshot(tab.id, tab.windowId);
-      
+
       console.log("Screenshot captured successfully");
-      
+
       const response = await fetch("http://localhost:5000/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           pageUrl: pageUrl,
           html: results[0].result,
           screenshot: screenshots
@@ -173,14 +208,25 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       }
       const summary = await response.json();
       showSuccess(summary.summary || "Error summarizing - no content returned.");
+
+      // Check if this is Amazon order history page and click Next button
+      if (isAmazonOrderHistoryPage(pageUrl)) {
+        console.log("Detected Amazon order history page, attempting to click Next button");
+        setTimeout(async () => {
+          const clicked = await clickNextButton(tab.id);
+          if (clicked) {
+            showSuccess((summary.summary || "Summary generated") + "\n\n[Automatically moved to next page]");
+          }
+        }, NEXT_BUTTON_DELAY);
+      }
     } catch (err) {
       console.error("Detailed error:", err);
       let errorMessage = "An error occurred.";
-      
+
       if (err.message) {
         errorMessage = `Error: ${err.message}`;
       }
-      
+
       // Check for specific error types
       if (err.name === "TypeError" && err.message.includes("fetch")) {
         errorMessage = "Cannot connect to server. Make sure the server is running on localhost:5000.";
@@ -189,7 +235,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       } else if (err.message.includes("tabs.captureVisibleTab")) {
         errorMessage = "Screenshot capture failed. The extension may need additional permissions.";
       }
-      
+
       document.getElementById("result").textContent = errorMessage;
       document.getElementById("result").className = "error";
     }

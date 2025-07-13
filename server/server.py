@@ -38,10 +38,11 @@ def summarize() -> Tuple[Response, int]:
   image_text = extract_text_from_images(images)
   
   # Combine HTML text with OCR text from images
-  if image_text:
-    combined_text = image_text
-  else:
-    combined_text = text
+  # if image_text:
+  #   combined_text = image_text
+  # else:
+  #   combined_text = text
+  combined_text = text
   
   # Log the extracted text for debugging
   with open("logs/extracted_text.log", "w", encoding="utf-8") as text_log:
