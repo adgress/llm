@@ -1,0 +1,7 @@
+flask
+flask-cors
+openai
+tiktoken
+beautifulsoup4
+pytesseract
+pillow
