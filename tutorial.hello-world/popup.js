@@ -7,8 +7,10 @@ const NEXT_BUTTON_DELAY = 1000; // Delay before clicking next button
 
 // Show loading message immediately
 const resultElement = document.getElementById("result");
-resultElement.textContent = "Loading summary...";
+resultElement.textContent = "Sidebar loaded - detecting page...";
 resultElement.className = "loading";
+
+console.log("Sidebar extension loaded in:", window.location.href);
 
 // Function to detect if URL is likely a PDF
 function isPdfUrl(url) {
@@ -25,9 +27,74 @@ function isAmazonOrderHistoryPage(url) {
   return url.includes('amazon.com') && url.includes('/your-orders/orders');
 }
 
+// Function to check if the Next button is currently visible
+async function isNextButtonVisible(tabId) {
+  try {
+    const [{ result: buttonInfo }] = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        // Look for the Next button in pagination
+        const nextButton = document.querySelector('ul.a-pagination li.a-last a');
+        if (nextButton && nextButton.textContent.includes('Next')) {
+          // Check if the button is visible
+          const rect = nextButton.getBoundingClientRect();
+          const isVisible = rect.width > 0 && rect.height > 0 &&
+            rect.top >= 0 && rect.left >= 0 &&
+            rect.bottom <= window.innerHeight &&
+            rect.right <= window.innerWidth;
+
+          const computedStyle = window.getComputedStyle(nextButton);
+          const isDisplayed = computedStyle.display !== 'none' &&
+            computedStyle.visibility !== 'hidden' &&
+            computedStyle.opacity !== '0';
+
+          return {
+            exists: true,
+            visible: isVisible && isDisplayed,
+            text: nextButton.textContent.trim(),
+            bounds: rect
+          };
+        }
+        return {
+          exists: false,
+          visible: false,
+          text: '',
+          bounds: null
+        };
+      }
+    });
+
+    console.log("Next button visibility check:", buttonInfo);
+    return buttonInfo;
+  } catch (error) {
+    console.error("Error checking Next button visibility:", error);
+    return {
+      exists: false,
+      visible: false,
+      text: '',
+      bounds: null
+    };
+  }
+}
+
 // Function to click the Next button on Amazon order history page
 async function clickNextButton(tabId) {
   try {
+    // First check if the button is visible
+    // const buttonInfo = await isNextButtonVisible(tabId);
+
+    // if (!buttonInfo.exists) {
+    //   console.log("Next button does not exist on this page");
+    //   return false;
+    // }
+
+    // if (!buttonInfo.visible) {
+    //   console.log("Next button exists but is not visible:", buttonInfo);
+    //   return false;
+    // }
+
+    // console.log("Next button is visible, attempting to click:", buttonInfo.text);
+
     const [{ result: nextButtonExists }] = await chrome.scripting.executeScript({
       target: { tabId: tabId },
       func: () => {
@@ -45,7 +112,7 @@ async function clickNextButton(tabId) {
       console.log("Successfully clicked Next button");
       return true;
     } else {
-      console.log("Next button not found or already on last page");
+      console.log("Next button not found during click attempt");
       return false;
     }
   } catch (error) {
@@ -114,7 +181,10 @@ async function captureFullPageScreenshot(tabId, windowId) {
         quality: SCREENSHOT_QUALITY
       });
       screenshots.push(screenshot);
-
+      if (isAmazonOrderHistoryPage(chrome.tabs.get(tabId).url) && isNextButtonVisible(tabId).visible) {
+        console.log("Next button is visible, stopping capture");
+        break
+      }
       // Add delay between captures to respect rate limits
       if (i < actualScreenshots - 1) { // Don't delay after the last screenshot
         await new Promise(resolve => setTimeout(resolve, CAPTURE_DELAY));
@@ -145,22 +215,26 @@ async function captureSingleScreenshot(windowId) {
   return [screenshot]; // Return as array for consistency
 }
 
-// Auto-run summarization when popup opens
-chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-  const pageUrl = tab.url; // Get the URL of the active tab
+// Function to summarize the current active tab
+async function summarizeCurrentTab() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const pageUrl = tab.url;
 
-  // Check if this is a PDF URL
-  if (isPdfUrl(pageUrl)) {
-    showError("PDF summarization is not currently supported. This appears to be a PDF document.");
-    return;
-  }
-
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: function () {
-      return document.documentElement.outerHTML;
+    // Check if this is a PDF URL
+    if (isPdfUrl(pageUrl)) {
+      showError("PDF summarization is not currently supported. This appears to be a PDF document.");
+      return;
     }
-  }, async (results) => {
+
+    // Get page HTML
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: function () {
+        return document.documentElement.outerHTML;
+      }
+    });
+
     console.log(results);
     if (!results || !results[0] || !results[0].result) {
       showError("Cannot summarize this page. Unable to access page content.");
@@ -182,6 +256,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
           screenshot: screenshots
         })
       });
+
       console.log(response);
       if (!response.ok) {
         let errorMessage = `Server error ${response.status}`;
@@ -206,6 +281,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
         showError(errorMessage);
         return;
       }
+
       const summary = await response.json();
       showSuccess(summary.summary || "Error summarizing - no content returned.");
 
@@ -239,5 +315,11 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       document.getElementById("result").textContent = errorMessage;
       document.getElementById("result").className = "error";
     }
-  });
-});
+  } catch (error) {
+    console.error("Error in summarizeCurrentTab:", error);
+    showError("Failed to get current tab information.");
+  }
+}
+
+// Auto-run summarization when popup opens
+// summarizeCurrentTab();

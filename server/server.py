@@ -67,7 +67,7 @@ def summarize() -> Tuple[Response, int]:
   print("Generating summary with OpenAI...")
   # Call OpenAI API to summarize the text
   try:
-    summary = generate_summary(combined_text, pageUrl)
+    summary = generate_summary(combined_text, pageUrl, images)
     response = jsonify({"summary": summary})
     print("Generating response:\n", response.get_data(as_text=True))
     return response, HTTPStatus.OK
