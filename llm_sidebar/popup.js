@@ -1,5 +1,5 @@
 // Configuration constants
-const MAX_SCREENSHOTS = 10; // Reduced limit to be more conservative
+const MAX_SCREENSHOTS = 5; // Reduced limit to be more conservative
 const SCROLL_DELAY = 200; // Delay after scrolling before capture
 const CAPTURE_DELAY = 500; // Delay between screenshot captures
 const SCREENSHOT_QUALITY = 90; // PNG quality for screenshots
