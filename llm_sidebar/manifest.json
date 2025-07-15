@@ -23,9 +23,11 @@
   "permissions": [
     "activeTab",
     "tabs",
-    "sidePanel"
+    "sidePanel",
+    "scripting"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "file:///*"
   ]
 }

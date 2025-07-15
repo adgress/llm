@@ -44,12 +44,17 @@ function isPdfUrl(url) {
     url.includes('pdf?') ||            // PDF with query params
     url.includes('filetype=pdf') ||    // Some document viewers
     url.match(/\/pdf\/\d+/) ||         // arXiv-specific pattern
-    url.includes('arxiv.org/pdf/');    // Explicit arXiv PDF check
+    url.includes('arxiv.org/pdf/') ||  // Explicit arXiv PDF check
+    url.startsWith('blob:');           // Blob URLs (often PDFs)
 }
 
 // Function to check if this is an Amazon order history page
 function isAmazonOrderHistoryPage(url) {
   return url.includes('amazon.com') && url.includes('/your-orders/orders');
+}
+
+function isAmazonProductPage(url) {
+  return url.includes('amazon.com') && !url.includes('/your-orders/orders');
 }
 
 function isTwitterPage(url) {
@@ -246,10 +251,71 @@ async function summarizeCurrentTab(additionalInstructions = '') {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const pageUrl = tab.url;
 
-    // Check if this is a PDF URL
+    // Check if this is a PDF URL or blob URL
     if (isPdfUrl(pageUrl)) {
-      showError("PDF summarization is not currently supported. This appears to be a PDF document.");
-      return;
+      try {
+        console.log("Detected PDF URL, attempting to process:", pageUrl);
+
+        // Use PDF processing methods from pdfs.js
+        const pdfResult = await processPdfContent(tab.id, pageUrl);
+
+        if (pdfResult.success) {
+          console.log(`PDF processing successful using method: ${pdfResult.method}`);
+
+          // Send PDF data to server
+          const summary = await sendPdfToServer(pdfResult, pageUrl, additionalInstructions);
+          showSuccess(summary.summary || "PDF summarized successfully");
+          return;
+        } else {
+          console.error("PDF processing failed:", pdfResult.error);
+          console.log("Falling back to full page screenshot for PDF processing");
+
+          // Fallback: Take a PDF-specific screenshot and process it as a regular page
+          try {
+            const screenshots = await capturePdfScreenshots(tab.id, tab.windowId, pageUrl);
+            console.log("PDF screenshots captured successfully as fallback");
+            console.log("Num screenshots captured:", screenshots.length);
+
+            const response = await fetch("http://localhost:5000/summarize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                pageUrl: pageUrl,
+                html: "", // Empty HTML since we're using screenshot
+                screenshot: screenshots,
+                additionalInstructions: additionalInstructions + " (Note: This is a PDF document processed via screenshot)"
+              })
+            });
+
+            if (!response.ok) {
+              let errorMessage = `Server error ${response.status}`;
+              try {
+                const errorData = await response.json();
+                if (errorData.error) {
+                  errorMessage = errorData.error;
+                }
+              } catch {
+                errorMessage = `Server error ${response.status}`;
+              }
+              console.error(`Server error (${response.status}):`, errorMessage);
+              showError(errorMessage);
+              return;
+            }
+
+            const summary = await response.json();
+            showSuccess(summary.summary || "PDF processed via screenshot successfully");
+            return;
+          } catch (screenshotError) {
+            console.error("PDF screenshot fallback also failed:", screenshotError);
+            showError("PDF processing failed and screenshot fallback also failed. Please try again.");
+            return;
+          }
+        }
+      } catch (error) {
+        console.error("Error processing PDF:", error);
+        showError("Failed to process PDF document. Please try again.");
+        return;
+      }
     }
 
     // Get page HTML

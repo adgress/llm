@@ -2,13 +2,84 @@ from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from typing import Tuple
 import os
+import base64
+import requests
 from http import HTTPStatus
+from io import BytesIO
 from extract_html import extract_text_from_html
 from screenshots import extract_text_from_images, save_screenshots
 from llms import count_tokens, generate_summary, MIN_INPUT_TOKENS, MAX_INPUT_TOKENS
 
+# Try to import PyPDF2, handle if not installed
+import PyPDF2
+PDF_SUPPORT = True
+
+# Try to import pdf2image for PNG conversion
+from pdf2image import convert_from_bytes
+PDF_TO_IMAGE_SUPPORT = True
+
 app = Flask(__name__)
 CORS(app)  # Allow Chrome extension access
+
+def process_pdf_data(pdf_data: str, page_url: str, additional_instructions: str) -> Tuple[Response, int]:
+  """Process PDF data and return summary"""
+  print("Processing PDF content")
+  if not PDF_SUPPORT:
+    return jsonify({"error": "PDF processing not available. PyPDF2 not installed."}), HTTPStatus.INTERNAL_SERVER_ERROR
+  
+  try:
+    # Process PDF data (base64 encoded)
+    pdf_bytes = base64.b64decode(pdf_data)
+    pdf_file = BytesIO(pdf_bytes)
+    pdf_reader = PyPDF2.PdfReader(pdf_file)
+    
+    text = ""
+    for page in pdf_reader.pages:
+      text += page.extract_text() + "\n"
+    
+    # Log the extracted PDF text for debugging
+    with open("logs/pdf_text.log", "w", encoding="utf-8") as pdf_log:
+      pdf_log.write(f"URL: {page_url}\n")
+      pdf_log.write(f"Extracted PDF text:\n{text}\n")
+    print(f"PDF text saved to logs/pdf_text.log")
+    
+    # Convert PDF to PNG images and save them
+    if PDF_TO_IMAGE_SUPPORT:
+      try:
+        # Create directory for PDF screenshots
+        os.makedirs("logs/pdf_screenshots", exist_ok=True)
+        
+        # Convert PDF bytes to images
+        images = convert_from_bytes(pdf_bytes, dpi=200, fmt='PNG')
+        
+        # Save each page as a PNG file
+        for i, image in enumerate(images):
+          if (i >= 5):
+            break
+          filename = f"logs/pdf_screenshots/pdf_page_{i+1}.png"
+          image.save(filename, 'PNG')
+          print(f"Saved PDF page {i+1} as {filename}")
+        
+        print(f"Successfully converted PDF to {i} PNG images")
+        
+      except Exception as e:
+        print(f"Error converting PDF to PNG: {e}")
+    else:
+      print("PDF to PNG conversion skipped - pdf2image not available")
+    
+    if not text.strip():
+      return jsonify({"error": "Could not extract text from PDF"}), HTTPStatus.BAD_REQUEST
+    if len(text) < MIN_INPUT_TOKENS:
+      return jsonify({"error": f"Extracted text is too short to summarize ({len(text)}/{MIN_INPUT_TOKENS})"}), HTTPStatus.BAD_REQUEST
+    if len(text) > MAX_INPUT_TOKENS:
+      text = text[:MAX_INPUT_TOKENS]  # Truncate to max tokens if needed
+    # Generate summary for PDF text
+    summary = generate_summary(text[:3000], page_url, [], additional_instructions)
+    return jsonify({"summary": summary}), HTTPStatus.OK
+    
+  except Exception as e:
+    print(f"Error processing PDF: {e}")
+    return jsonify({"error": f"Error processing PDF: {str(e)}"}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 @app.route("/summarize", methods=["POST"])
 def summarize() -> Tuple[Response, int]:
@@ -17,8 +88,46 @@ def summarize() -> Tuple[Response, int]:
   html_content = data.get("html", "")
   screenshots = data.get("screenshot", "")
   additional_instructions = data.get("additionalInstructions", "")
+  
+  # New PDF handling
+  is_pdf = data.get("isPdf", False)
+  pdf_data = data.get("pdfData", "")
+  direct_pdf_url = data.get("directPdfUrl", "")
+  extracted_text = data.get("extractedText", "")
 
   os.makedirs("logs", exist_ok=True)  # Ensure logs directory exists
+  
+  # Handle PDF content
+  if is_pdf:
+    if direct_pdf_url:
+      # Handle direct PDF URL (like arXiv)
+      try:
+        print(f"Processing direct PDF URL: {direct_pdf_url}")
+        response = requests.get(direct_pdf_url)
+        if response.status_code == 200:
+          return process_pdf_data(base64.b64encode(response.content).decode(), pageUrl, additional_instructions)
+        else:
+          return jsonify({"error": f"Failed to download PDF: {response.status_code}"}), HTTPStatus.BAD_REQUEST
+      except Exception as e:
+        print(f"Error downloading PDF: {e}")
+        return jsonify({"error": f"Error downloading PDF: {str(e)}"}), HTTPStatus.INTERNAL_SERVER_ERROR
+    elif pdf_data:
+      # Handle blob data
+      return process_pdf_data(pdf_data, pageUrl, additional_instructions)
+    else:
+      return jsonify({"error": "No PDF data provided"}), HTTPStatus.BAD_REQUEST
+  
+  # Handle extracted text from PDF viewer
+  elif extracted_text:
+    try:
+      # Use the extracted text directly
+      summary = generate_summary(extracted_text, pageUrl, [], additional_instructions)
+      return jsonify({"summary": summary}), HTTPStatus.OK
+    except Exception as e:
+      print(f"Error processing extracted text: {e}")
+      return jsonify({"error": f"Error processing extracted text: {str(e)}"}), HTTPStatus.INTERNAL_SERVER_ERROR
+  
+  # Original HTML processing logic
   if not pageUrl and not html_content:
     print("No URL or HTML content provided for summarization")
     return jsonify({"error": "No URL or HTML content provided"}), HTTPStatus.BAD_REQUEST
