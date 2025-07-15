@@ -77,6 +77,54 @@
       color: #666;
       font-style: italic;
     }
+
+    .summarize-button {
+      background-color: #1976d2;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-bottom: 16px;
+      width: 100%;
+      transition: background-color 0.2s;
+    }
+
+    .summarize-button:hover {
+      background-color: #1565c0;
+    }
+
+    .summarize-button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    .instructions-input {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      margin-bottom: 16px;
+      resize: vertical;
+      min-height: 60px;
+      font-family: Arial, sans-serif;
+    }
+
+    .instructions-input:focus {
+      outline: none;
+      border-color: #1976d2;
+      box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.2);
+    }
+
+    .instructions-label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      color: #666;
+      font-weight: 500;
+    }
   </style>
 </head>
 
@@ -85,7 +133,15 @@
     <h1>Page Summary</h1>
     <div class="status-indicator">Sidebar Mode</div>
   </div>
-  <pre id="result" class="loading">Loading summary...</pre>
+
+  <label class="instructions-label" for="instructions-input">
+    Additional Instructions (optional):
+  </label>
+  <textarea id="instructions-input" class="instructions-input"
+    placeholder="Enter any specific instructions for the summary (e.g., 'Focus on technical details', 'Summarize in bullet points', etc.)"></textarea>
+
+  <button id="summarize-btn" class="summarize-button">Summarize Page</button>
+  <pre id="result" class="loading">Click "Summarize Page" to get started...</pre>
   <script src="popup.js"></script>
 </body>
 

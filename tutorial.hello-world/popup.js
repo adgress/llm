@@ -5,12 +5,37 @@ const CAPTURE_DELAY = 500; // Delay between screenshot captures
 const SCREENSHOT_QUALITY = 90; // PNG quality for screenshots
 const NEXT_BUTTON_DELAY = 1000; // Delay before clicking next button
 
-// Show loading message immediately
+
+// Show initial message
 const resultElement = document.getElementById("result");
-resultElement.textContent = "Sidebar loaded - detecting page...";
+resultElement.textContent = "Click 'Summarize Page' to get started...";
 resultElement.className = "loading";
 
+
 console.log("Sidebar extension loaded in:", window.location.href);
+
+// Add event listener for the summarize button
+document.addEventListener('DOMContentLoaded', function () {
+  const summarizeBtn = document.getElementById('summarize-btn');
+  const instructionsInput = document.getElementById('instructions-input');
+
+  if (summarizeBtn) {
+    summarizeBtn.addEventListener('click', function () {
+      this.disabled = true;
+      this.textContent = 'Summarizing...';
+      resultElement.textContent = "Analyzing page content...";
+      resultElement.className = "loading";
+
+      // Get additional instructions from the text box
+      const additionalInstructions = instructionsInput ? instructionsInput.value.trim() : '';
+
+      summarizeCurrentTab(additionalInstructions).finally(() => {
+        this.disabled = false;
+        this.textContent = 'Summarize Page';
+      });
+    });
+  }
+});
 
 // Function to detect if URL is likely a PDF
 function isPdfUrl(url) {
@@ -25,6 +50,11 @@ function isPdfUrl(url) {
 // Function to check if this is an Amazon order history page
 function isAmazonOrderHistoryPage(url) {
   return url.includes('amazon.com') && url.includes('/your-orders/orders');
+}
+
+function isTwitterPage(url) {
+  // Check if the URL is a Twitter page
+  return url.includes('twitter.com') || url.includes('x.com');
 }
 
 // Function to check if the Next button is currently visible
@@ -80,20 +110,6 @@ async function isNextButtonVisible(tabId) {
 // Function to click the Next button on Amazon order history page
 async function clickNextButton(tabId) {
   try {
-    // First check if the button is visible
-    // const buttonInfo = await isNextButtonVisible(tabId);
-
-    // if (!buttonInfo.exists) {
-    //   console.log("Next button does not exist on this page");
-    //   return false;
-    // }
-
-    // if (!buttonInfo.visible) {
-    //   console.log("Next button exists but is not visible:", buttonInfo);
-    //   return false;
-    // }
-
-    // console.log("Next button is visible, attempting to click:", buttonInfo.text);
 
     const [{ result: nextButtonExists }] = await chrome.scripting.executeScript({
       target: { tabId: tabId },
@@ -138,6 +154,9 @@ function showSuccess(message) {
 // Function to capture full page screenshot
 async function captureFullPageScreenshot(tabId, windowId) {
   try {
+    // Get tab information first
+    const tab = await chrome.tabs.get(tabId);
+
     // Scroll to top before starting
     await chrome.scripting.executeScript({
       target: { tabId: tabId },
@@ -181,10 +200,16 @@ async function captureFullPageScreenshot(tabId, windowId) {
         quality: SCREENSHOT_QUALITY
       });
       screenshots.push(screenshot);
-      if (isAmazonOrderHistoryPage(chrome.tabs.get(tabId).url) && isNextButtonVisible(tabId).visible) {
-        console.log("Next button is visible, stopping capture");
-        break
+
+      // Check if this is Amazon order history and if Next button is visible
+      if (isAmazonOrderHistoryPage(tab.url)) {
+        const buttonInfo = await isNextButtonVisible(tabId);
+        if (buttonInfo.visible) {
+          console.log("Next button is visible, stopping capture");
+          break;
+        }
       }
+
       // Add delay between captures to respect rate limits
       if (i < actualScreenshots - 1) { // Don't delay after the last screenshot
         await new Promise(resolve => setTimeout(resolve, CAPTURE_DELAY));
@@ -216,7 +241,7 @@ async function captureSingleScreenshot(windowId) {
 }
 
 // Function to summarize the current active tab
-async function summarizeCurrentTab() {
+async function summarizeCurrentTab(additionalInstructions = '') {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const pageUrl = tab.url;
@@ -243,7 +268,12 @@ async function summarizeCurrentTab() {
 
     // Capture screenshot of the visible tab
     try {
-      const screenshots = await captureFullPageScreenshot(tab.id, tab.windowId);
+      // const screenshots = await captureFullPageScreenshot(tab.id, tab.windowId);
+      let screenshots = [];
+      if (isTwitterPage(pageUrl)) {
+        screenshots = await captureFullPageScreenshot(tab.id, tab.windowId);
+      }
+
 
       console.log("Screenshot captured successfully");
 
@@ -253,7 +283,8 @@ async function summarizeCurrentTab() {
         body: JSON.stringify({
           pageUrl: pageUrl,
           html: results[0].result,
-          screenshot: screenshots
+          screenshot: screenshots,
+          additionalInstructions: additionalInstructions
         })
       });
 
@@ -321,5 +352,4 @@ async function summarizeCurrentTab() {
   }
 }
 
-// Auto-run summarization when popup opens
-// summarizeCurrentTab();
+// Button click handler is set up in DOMContentLoaded event listener above

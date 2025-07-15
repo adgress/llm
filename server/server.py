@@ -16,6 +16,7 @@ def summarize() -> Tuple[Response, int]:
   pageUrl = data.get("pageUrl", "")
   html_content = data.get("html", "")
   screenshots = data.get("screenshot", "")
+  additional_instructions = data.get("additionalInstructions", "")
 
   os.makedirs("logs", exist_ok=True)  # Ensure logs directory exists
   if not pageUrl and not html_content:
@@ -31,28 +32,24 @@ def summarize() -> Tuple[Response, int]:
 
   text = extract_text_from_html(html_content)
   print(f"Extracted text from HTML: {text[:20]}...")
-  
+  # Log the extracted text for debugging
+  with open("logs/extracted_text.log", "w", encoding="utf-8") as text_log:
+    text_log.write(f"{text}")
   
   # Save screenshots if provided and extract text from them
   images = save_screenshots(screenshots)
   image_text = extract_text_from_images(images)
   
-  # Combine HTML text with OCR text from images
-  # if image_text:
-  #   combined_text = image_text
-  # else:
-  #   combined_text = text
-  combined_text = text
-  
-  # Log the extracted text for debugging
-  with open("logs/extracted_text.log", "w", encoding="utf-8") as text_log:
-    text_log.write(f"{text}")
-  
-  # Save OCR text to separate file if available
+    # Save OCR text to separate file if available
   if image_text:
     with open("logs/ocr_text.log", "w", encoding="utf-8") as ocr_log:
       ocr_log.write(f"{image_text}")
     print(f"OCR text saved to logs/ocr_text.log")
+  
+  combined_text = text
+  # Combine HTML text with OCR text from images
+  if image_text:
+    combined_text += "\n\n" + image_text
   
   token_count = count_tokens(combined_text)
   # token_count = count_tokens(image_text)
@@ -67,7 +64,7 @@ def summarize() -> Tuple[Response, int]:
   print("Generating summary with OpenAI...")
   # Call OpenAI API to summarize the text
   try:
-    summary = generate_summary(combined_text, pageUrl, images)
+    summary = generate_summary(combined_text, pageUrl, images, additional_instructions)
     response = jsonify({"summary": summary})
     print("Generating response:\n", response.get_data(as_text=True))
     return response, HTTPStatus.OK

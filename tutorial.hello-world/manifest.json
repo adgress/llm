@@ -18,10 +18,9 @@
     "service_worker": "background.js"
   },
   "side_panel": {
-    "default_path": "hello.html"
+    "default_path": "llm_sidebar.html"
   },
   "permissions": [
-    "scripting",
     "activeTab",
     "tabs",
     "sidePanel"
