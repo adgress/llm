@@ -1,34 +1,73 @@
 // Method 1: Extract blob data and send to server
 async function handleBlobUrl(tabId, blobUrl) {
+    console.log("handleBlobUrl called with:", { tabId, blobUrl });
+
     try {
+        console.log("Attempting to inject script into tab:", tabId);
+
         // Get the blob data from the page
         const [{ result: blobData }] = await chrome.scripting.executeScript({
             target: { tabId: tabId },
             func: (url) => {
+                console.log("Script injected, attempting to fetch blob URL:", url);
+
                 return fetch(url)
-                    .then(response => response.arrayBuffer())
+                    .then(response => {
+                        console.log("Fetch response status:", response.status);
+                        console.log("Fetch response headers:", Object.fromEntries(response.headers.entries()));
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        return response.arrayBuffer();
+                    })
                     .then(buffer => {
+                        console.log("ArrayBuffer received, size:", buffer.byteLength);
+
+                        if (buffer.byteLength === 0) {
+                            throw new Error("Empty buffer received");
+                        }
+
                         // Convert ArrayBuffer to base64
                         const bytes = new Uint8Array(buffer);
                         let binary = '';
                         for (let i = 0; i < bytes.byteLength; i++) {
                             binary += String.fromCharCode(bytes[i]);
                         }
-                        return btoa(binary);
+
+                        const base64Data = btoa(binary);
+                        console.log("Base64 conversion successful, length:", base64Data.length);
+
+                        return base64Data;
+                    })
+                    .catch(error => {
+                        console.error("Error in injected script:", error);
+                        throw error;
                     });
             },
             args: [blobUrl]
         });
 
+        console.log("Script execution completed, result type:", typeof blobData);
+        console.log("Result length:", blobData ? blobData.length : 0);
+
         return blobData;
     } catch (error) {
-        console.error("Error extracting blob data:", error);
+        console.error("Error in handleBlobUrl:", error);
+        console.error("Error details:", {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+        });
         return null;
     }
 }
 
 // Method 4: Extract text from PDF viewer on the page
 async function extractPdfTextFromPage(tabId) {
+    console.log("extractPdfTextFromPage called with tabId:", tabId);
+
     try {
         // Check if chrome.scripting is available
         if (!chrome.scripting || !chrome.scripting.executeScript) {
@@ -36,37 +75,55 @@ async function extractPdfTextFromPage(tabId) {
             return null;
         }
 
+        console.log("Attempting to inject PDF text extraction script");
+
         const [{ result: textContent }] = await chrome.scripting.executeScript({
             target: { tabId: tabId },
             func: () => {
+                console.log("PDF text extraction script injected");
+
                 // Try various methods to extract text from PDF viewers
 
                 // Method 1: Try PDF.js text layer
+                console.log("Trying Method 1: PDF.js text layer");
                 const textLayer = document.querySelector('.textLayer');
                 if (textLayer) {
-                    return textLayer.innerText;
+                    console.log("Found single text layer, extracting text");
+                    const text = textLayer.innerText;
+                    console.log("Text layer content length:", text.length);
+                    return text;
                 }
 
                 // Method 2: Try multiple text layers (for multi-page PDFs)
+                console.log("Trying Method 2: Multiple text layers");
                 const textLayers = document.querySelectorAll('.textLayer');
                 if (textLayers.length > 0) {
+                    console.log("Found", textLayers.length, "text layers");
                     let allText = '';
-                    textLayers.forEach(layer => {
-                        allText += layer.innerText + '\n';
+                    textLayers.forEach((layer, index) => {
+                        const layerText = layer.innerText;
+                        console.log(`Text layer ${index} length:`, layerText.length);
+                        allText += layerText + '\n';
                     });
+                    console.log("Combined text layers length:", allText.length);
                     return allText;
                 }
 
                 // Method 3: Try PDF.js viewer application
+                console.log("Trying Method 3: PDF.js viewer application");
                 if (window.PDFViewerApplication && window.PDFViewerApplication.pdfDocument) {
+                    console.log("PDF.js viewer application found");
                     // This is more complex and would need additional handling
                     return "PDF.js detected but text extraction needs more work";
                 }
 
                 // Method 4: Try to get all visible text from body
+                console.log("Trying Method 4: Body text extraction");
                 const body = document.body;
                 if (body && body.innerText) {
                     const text = body.innerText;
+                    console.log("Body text length:", text.length);
+
                     // Filter out common PDF viewer UI elements
                     const filteredText = text
                         .replace(/Page \d+ of \d+/g, '')
@@ -74,37 +131,61 @@ async function extractPdfTextFromPage(tabId) {
                         .replace(/\d+%/g, '') // Remove zoom percentages
                         .trim();
 
+                    console.log("Filtered text length:", filteredText.length);
+
                     if (filteredText && filteredText.length > 100) {
+                        console.log("Body text extraction successful");
                         return filteredText;
                     }
                 }
 
                 // Method 5: Try specific PDF viewer selectors
+                console.log("Trying Method 5: PDF viewer selectors");
                 const pdfContent = document.querySelector('[data-page-number]');
                 if (pdfContent) {
-                    return pdfContent.innerText;
+                    console.log("Found PDF content with data-page-number");
+                    const text = pdfContent.innerText;
+                    console.log("PDF content text length:", text.length);
+                    return text;
                 }
 
                 // Method 6: Try canvas-based PDF viewers (extract from canvas is complex)
+                console.log("Trying Method 6: Canvas detection");
                 const canvases = document.querySelectorAll('canvas');
                 if (canvases.length > 0) {
+                    console.log("Found", canvases.length, "canvas elements");
                     return "Canvas-based PDF detected - text extraction not implemented";
                 }
 
                 // Method 7: Try embed or object tags
+                console.log("Trying Method 7: Embed/Object tags");
                 const embed = document.querySelector('embed[type="application/pdf"]');
                 const object = document.querySelector('object[type="application/pdf"]');
                 if (embed || object) {
+                    console.log("Found embedded PDF element");
                     return "Embedded PDF detected - text extraction limited";
                 }
 
+                console.log("All text extraction methods failed");
                 return null;
             }
+        });
+
+        console.log("Text extraction completed, result:", {
+            success: textContent !== null,
+            textLength: textContent ? textContent.length : 0,
+            textType: typeof textContent
         });
 
         return textContent;
     } catch (error) {
         console.error("Error extracting PDF text:", error);
+        console.error("Error details:", {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+            tabId: tabId
+        });
         return null;
     }
 }
@@ -152,7 +233,9 @@ async function processPdfContent(tabId, pageUrl) {
         // First, try to extract text from the PDF viewer (Method 4)
         console.log("Step 2: Attempting text extraction from PDF viewer");
         const extractedText = await extractPdfTextFromPage(tabId);
-        if (extractedText && extractedText.length > 30) { // Lowered threshold for arXiv
+        console.log("Extracted text length:", extractedText ? extractedText.length : 0);
+        console.log("Extracted text:", extractedText ? extractedText.substring(0, 300) : "No text extracted");
+        if (extractedText && extractedText.length > 100) { // Lowered threshold for arXiv
             console.log("Successfully extracted text from PDF viewer");
             return {
                 success: true,
@@ -165,19 +248,43 @@ async function processPdfContent(tabId, pageUrl) {
         // If text extraction failed and it's a blob URL, try to get blob data (Method 1)
         if (pageUrl.startsWith('blob:')) {
             console.log("Step 3: Attempting to extract blob data for server processing");
+            console.log("Blob URL details:", {
+                url: pageUrl,
+                tabId: tabId,
+                urlLength: pageUrl.length
+            });
+
             const blobData = await handleBlobUrl(tabId, pageUrl);
+            console.log("Blob data extraction result:", {
+                success: blobData !== null,
+                dataLength: blobData ? blobData.length : 0,
+                dataType: typeof blobData
+            });
 
             if (blobData) {
+                console.log("Successfully extracted blob data, returning for server processing");
                 return {
                     success: true,
                     method: 'blob_data',
                     content: blobData,
                     needsServerProcessing: true
                 };
+            } else {
+                console.log("Failed to extract blob data");
             }
+        } else {
+            console.log("Step 3: Skipped - not a blob URL, pageUrl:", pageUrl);
         }
 
         // If all methods fail
+        console.log("All PDF processing methods failed");
+        console.log("Final processing summary:", {
+            pageUrl: pageUrl,
+            isBlob: pageUrl.startsWith('blob:'),
+            isDirectPdf: pageUrl.endsWith('.pdf') || pageUrl.includes('/pdf/') || pageUrl.includes('arxiv.org/pdf/'),
+            isLocalFile: pageUrl.startsWith('file:///')
+        });
+
         return {
             success: false,
             method: 'none',
@@ -188,6 +295,14 @@ async function processPdfContent(tabId, pageUrl) {
 
     } catch (error) {
         console.error("Error processing PDF content:", error);
+        console.error("Error details:", {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+            pageUrl: pageUrl,
+            tabId: tabId
+        });
+
         return {
             success: false,
             method: 'none',
